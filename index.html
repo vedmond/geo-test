@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>GeoTracker + IP fallback</title>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    #coords, #log { margin-top: 1rem; white-space: pre-wrap; font-size: .9rem; }
+    button { padding: .5rem 1rem; }
+  </style>
+</head>
+<body>
+  <h1>GeoTracker (с IP-fallback)</h1>
+  <button id="start">Начать отслеживание</button>
+  <div id="coords">Ожидание координат…</div>
+  <div id="log">Лог событий:</div>
+
+  <script>
+    const btn = document.getElementById('start');
+    const coordsDiv = document.getElementById('coords');
+    const logDiv    = document.getElementById('log');
+    let watchId     = null;
+
+    const optsHigh = { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 };
+    const optsLow  = { enableHighAccuracy: false, timeout: 30000, maximumAge: 0 };
+
+    function appendLog(msg) {
+      const t = new Date().toLocaleTimeString();
+      logDiv.textContent += `\n[${t}] ${msg}`;
+      console.log(msg);
+    }
+
+    function ipFallback() {
+      appendLog('→ Fallback: запрашиваем IP-геолокацию');
+      fetch('https://ipapi.co/json/')
+        .then(r => r.json())
+        .then(data => {
+          coordsDiv.textContent = 
+            `IP-координаты: ${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}\n` +
+            `Страна: ${data.country_name}, Город: ${data.city}`;
+          appendLog(`IP-fallback успех: lat=${data.latitude}, lon=${data.longitude}`);
+        })
+        .catch(e => {
+          appendLog(`IP-fallback ошибка: ${e.message}`);
+          coordsDiv.textContent = 'Невозможно получить координаты ни GPS, ни по IP';
+        });
+    }
+
+    function onSuccess(pos) {
+      const c = pos.coords;
+      coordsDiv.textContent = 
+        `Ш: ${c.latitude.toFixed(6)}, Д: ${c.longitude.toFixed(6)}\n` +
+        `Точность ±${c.accuracy} м`;
+      appendLog(`GPS-успех: lat=${c.latitude}, lon=${c.longitude}, acc=${c.accuracy}м`);
+    }
+
+    function onError(err, options) {
+      const name = err.code === 1 ? 'PERMISSION_DENIED'
+                 : err.code === 2 ? 'POSITION_UNAVAILABLE'
+                 : err.code === 3 ? 'TIMEOUT'
+                 : 'UNKNOWN';
+      appendLog(`Ошибка (${options.enableHighAccuracy?'High':'Low'}Acc): код=${err.code} ${name}`);
+      // если GPS недоступен и это была высокая точность — пробуем без неё
+      if (options.enableHighAccuracy && err.code === 2) {
+        appendLog('Пробуем GPS без высокой точности');
+        navigator.geolocation.getCurrentPosition(onSuccess, e => onError(e, optsLow), optsLow);
+        return;
+      }
+      // после всех попыток — fallback по IP
+      ipFallback();
+    }
+
+    btn.addEventListener('click', () => {
+      if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
+        appendLog('Отслеживание остановлено');
+        watchId = null;
+        btn.textContent = 'Начать отслеживание';
+        coordsDiv.textContent = 'Остановлено';
+      } else {
+        appendLog('=== СТАРТ GPS ===');
+        if (!navigator.geolocation) {
+          coordsDiv.textContent = 'Геолокация не поддерживается';
+          return;
+        }
+        watchId = navigator.geolocation.watchPosition(onSuccess, err => onError(err, optsHigh), optsHigh);
+        btn.textContent = 'Остановить';
+      }
+    });
+  </script>
+</body>
+</html>
